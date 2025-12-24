@@ -1,0 +1,222 @@
+{
+  "generated_at": "2025-12-24T09:36:49.089160Z",
+  "channels": {
+    "total": 10464,
+    "with_urls": 10464,
+    "without_urls": 0
+  },
+  "taxonomy": {
+    "by_resolution": {
+      "fhd": 2601,
+      "hd": 95,
+      "uhd": 14,
+      "sd": 1
+    },
+    "by_country": {
+      "TV": 3250,
+      "HD": 61,
+      "FM": 40,
+      "DD": 35,
+      "CA": 31,
+      "DT": 27,
+      "FL": 24,
+      "OK": 17,
+      "UK": 13,
+      "CT": 12,
+      "RT": 8,
+      "CO": 7,
+      "NY": 7,
+      "AZ": 6,
+      "MI": 6,
+      "BX": 5,
+      "FX": 5,
+      "KY": 5,
+      "LA": 5,
+      "MT": 5,
+      "NH": 5,
+      "CC": 4,
+      "DC": 4,
+      "DW": 4,
+      "NW": 4,
+      "OH": 4,
+      "ON": 4,
+      "ZB": 4,
+      "ET": 3,
+      "GO": 3
+    },
+    "by_variant": {
+      "news": 280,
+      "region": 120,
+      "kids": 55,
+      "plus": 46
+    },
+    "by_language": {
+      "de": 47,
+      "en": 25,
+      "by": 18,
+      "it": 4,
+      "ru": 2,
+      "ua": 1
+    }
+  },
+  "hierarchy": {
+    "total_roots": 9841,
+    "total_variants": 616,
+    "roots_with_variants": {
+      "2646": {
+        "name": "EN TV (720p)",
+        "variant_count": 14
+      },
+      "981": {
+        "name": "BBC One East (720p) [Geo-blocked]",
+        "variant_count": 8
+      },
+      "4877": {
+        "name": "MK TV (720p) [Not 24/7]",
+        "variant_count": 5
+      },
+      "6112": {
+        "name": "Pluto TV Paranormal",
+        "variant_count": 5
+      },
+      "245": {
+        "name": "ABC TV NT (720p)",
+        "variant_count": 4
+      },
+      "2731": {
+        "name": "ETV (720p)",
+        "variant_count": 4
+      },
+      "4740": {
+        "name": "Mechplus (720p)",
+        "variant_count": 4
+      },
+      "5153": {
+        "name": "Naruto",
+        "variant_count": 4
+      },
+      "6053": {
+        "name": "Pluto TV Horror",
+        "variant_count": 4
+      },
+      "6141": {
+        "name": "Pluto TV Sci-Fi",
+        "variant_count": 4
+      },
+      "6189": {
+        "name": "Pluto TV True Crime",
+        "variant_count": 4
+      },
+      "6734": {
+        "name": "Realmadrid TV",
+        "variant_count": 4
+      },
+      "8314": {
+        "name": "Totally Turtles",
+        "variant_count": 4
+      },
+      "8340": {
+        "name": "Transformers",
+        "variant_count": 4
+      },
+      "9559": {
+        "name": "World Poker Tour",
+        "variant_count": 4
+      },
+      "10234": {
+        "name": "新疆卫视 (576p)",
+        "variant_count": 4
+      },
+      "99": {
+        "name": "24 Канал (1080p)",
+        "variant_count": 3
+      },
+      "841": {
+        "name": "Avatar",
+        "variant_count": 3
+      },
+      "955": {
+        "name": "Baywatch",
+        "variant_count": 3
+      },
+      "1190": {
+        "name": "Bloomberg TV + (2160p)",
+        "variant_count": 3
+      },
+      "1721": {
+        "name": "CC Pluto TV",
+        "variant_count": 3
+      },
+      "1855": {
+        "name": "Cheers",
+        "variant_count": 3
+      },
+      "2754": {
+        "name": "Euronews",
+        "variant_count": 3
+      },
+      "3017": {
+        "name": "Frasier",
+        "variant_count": 3
+      },
+      "3506": {
+        "name": "Homeful (1080p)",
+        "variant_count": 3
+      },
+      "3608": {
+        "name": "iCarly",
+        "variant_count": 3
+      },
+      "4774": {
+        "name": "Melrose Place",
+        "variant_count": 3
+      },
+      "5036": {
+        "name": "MTV Pluto TV",
+        "variant_count": 3
+      },
+      "5041": {
+        "name": "MTV Ridiculousness",
+        "variant_count": 3
+      },
+      "5390": {
+        "name": "Nick Pluto TV",
+        "variant_count": 3
+      }
+    }
+  },
+  "matching": {},
+  "countries": {},
+  "groups": {
+    "Undefined": 3195,
+    "General": 2287,
+    "News": 791,
+    "Religious": 699,
+    "Music": 591,
+    "Entertainment": 553,
+    "Movies": 329,
+    "Sports": 286,
+    "Series": 193,
+    "Kids": 192,
+    "Legislative": 181,
+    "Education": 140,
+    "Culture": 112,
+    "Documentary": 94,
+    "Lifestyle": 86,
+    "Shop": 84,
+    "Comedy": 68,
+    "Business": 60,
+    "Outdoor": 38,
+    "Classic": 35,
+    "Travel": 34,
+    "Family": 31,
+    "Cooking": 30,
+    "Animation": 27,
+    "General;Public": 21,
+    "Animation;Kids": 18,
+    "General;News": 17,
+    "Weather": 13,
+    "Science": 13,
+    "Auto": 13
+  }
+}

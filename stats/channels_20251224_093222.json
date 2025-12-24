@@ -1,0 +1,53 @@
+{
+  "generated_at": "2025-12-24T09:32:22.760666Z",
+  "channels": {
+    "total": 10464,
+    "with_urls": 10464,
+    "without_urls": 0
+  },
+  "taxonomy": {
+    "by_resolution": {},
+    "by_country": {},
+    "by_variant": {},
+    "by_language": {}
+  },
+  "hierarchy": {
+    "total_roots": 0,
+    "total_variants": 0,
+    "roots_with_variants": {}
+  },
+  "matching": {},
+  "countries": {},
+  "groups": {
+    "Undefined": 3195,
+    "General": 2287,
+    "News": 791,
+    "Religious": 699,
+    "Music": 591,
+    "Entertainment": 553,
+    "Movies": 329,
+    "Sports": 286,
+    "Series": 193,
+    "Kids": 192,
+    "Legislative": 181,
+    "Education": 140,
+    "Culture": 112,
+    "Documentary": 94,
+    "Lifestyle": 86,
+    "Shop": 84,
+    "Comedy": 68,
+    "Business": 60,
+    "Outdoor": 38,
+    "Classic": 35,
+    "Travel": 34,
+    "Family": 31,
+    "Cooking": 30,
+    "Animation": 27,
+    "General;Public": 21,
+    "Animation;Kids": 18,
+    "General;News": 17,
+    "Weather": 13,
+    "Science": 13,
+    "Auto": 13
+  }
+}

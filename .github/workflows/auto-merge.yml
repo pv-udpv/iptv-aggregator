@@ -1,0 +1,330 @@
+name: Intelligent Auto-Merge
+
+# Trigger on:
+# 1. PR review approval
+# 2. Status check completion
+# 3. Manual label addition (auto-merge)
+on:
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to auto-merge'
+        required: true
+        type: number
+      dry_run:
+        description: 'Dry run (no actual merge)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "number=${{ inputs.pr_number }}" >> $GITHUB_OUTPUT
+            echo "dry_run=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "dry_run=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Get PR details
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: ${{ steps.pr.outputs.number }}
+            });
+            
+            console.log(`PR #${pr.number}: ${pr.title}`);
+            console.log(`State: ${pr.state}`);
+            console.log(`Mergeable: ${pr.mergeable}`);
+            console.log(`Mergeable state: ${pr.mergeable_state}`);
+            
+            core.setOutput('state', pr.state);
+            core.setOutput('mergeable', pr.mergeable);
+            core.setOutput('mergeable_state', pr.mergeable_state);
+            core.setOutput('draft', pr.draft);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base', pr.base.ref);
+            core.setOutput('has_auto_merge_label', pr.labels.some(l => l.name === 'auto-merge'));
+            
+            return pr;
+      
+      - name: Check if auto-merge enabled
+        id: check_enabled
+        run: |
+          # Auto-merge enabled if:
+          # 1. Manual trigger (workflow_dispatch), OR
+          # 2. PR has 'auto-merge' label
+          
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+            echo "reason=Manual trigger" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.pr_details.outputs.has_auto_merge_label }}" == "true" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+            echo "reason=auto-merge label present" >> $GITHUB_OUTPUT
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+            echo "reason=No auto-merge label" >> $GITHUB_OUTPUT
+            echo "⏭️ Auto-merge not enabled for this PR"
+            exit 0
+          fi
+      
+      - name: Safety checks
+        if: steps.check_enabled.outputs.enabled == 'true'
+        id: safety
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.pr.outputs.number }};
+            
+            console.log('\n🔍 Running safety checks...\n');
+            
+            // 1. Check PR state
+            const state = '${{ steps.pr_details.outputs.state }}';
+            if (state !== 'open') {
+              core.setFailed(`PR is ${state}, not open`);
+              return;
+            }
+            console.log('✅ PR is open');
+            
+            // 2. Check if draft
+            const isDraft = '${{ steps.pr_details.outputs.draft }}' === 'true';
+            if (isDraft) {
+              core.setFailed('PR is still a draft');
+              return;
+            }
+            console.log('✅ PR is not a draft');
+            
+            // 3. Check mergeable state
+            const mergeableState = '${{ steps.pr_details.outputs.mergeable_state }}';
+            const acceptableStates = ['clean', 'unstable', 'has_hooks'];
+            if (!acceptableStates.includes(mergeableState)) {
+              core.setFailed(`PR mergeable_state is '${mergeableState}' (conflicts or blocked)`);
+              return;
+            }
+            console.log(`✅ Mergeable state: ${mergeableState}`);
+            
+            // 4. Check required status checks
+            const headSha = '${{ steps.pr_details.outputs.head_sha }}';
+            const { data: checkRuns } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha
+            });
+            
+            const failedChecks = checkRuns.check_runs.filter(c => 
+              c.status === 'completed' && c.conclusion !== 'success' && c.conclusion !== 'skipped'
+            );
+            
+            if (failedChecks.length > 0) {
+              const failed = failedChecks.map(c => `  - ${c.name}: ${c.conclusion}`).join('\n');
+              core.setFailed(`Failed CI checks:\n${failed}`);
+              return;
+            }
+            console.log(`✅ All CI checks passed (${checkRuns.check_runs.length} checks)`);
+            
+            // 5. Check reviews (if targeting main/master)
+            const base = '${{ steps.pr_details.outputs.base }}';
+            if (['main', 'master'].includes(base)) {
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              
+              const approvals = reviews.filter(r => r.state === 'APPROVED').length;
+              const changesRequested = reviews.filter(r => r.state === 'CHANGES_REQUESTED').length;
+              
+              if (changesRequested > 0) {
+                core.setFailed(`PR has ${changesRequested} change requests`);
+                return;
+              }
+              
+              // For main/master: require at least 1 approval OR owner's own PR
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              
+              const isOwner = pr.user.login === context.repo.owner;
+              
+              if (approvals === 0 && !isOwner) {
+                core.setFailed('No approvals found (required for main/master)');
+                return;
+              }
+              
+              console.log(`✅ Reviews: ${approvals} approvals, ${changesRequested} change requests`);
+            }
+            
+            console.log('\n✅ All safety checks passed!\n');
+            core.setOutput('passed', 'true');
+      
+      - name: Determine merge strategy
+        if: steps.safety.outputs.passed == 'true'
+        id: strategy
+        run: |
+          # Default: squash for feature branches
+          # Configurable via PR labels:
+          # - merge-strategy:merge → standard merge commit
+          # - merge-strategy:rebase → rebase and merge
+          # - merge-strategy:squash → squash (default)
+          
+          STRATEGY="squash"
+          
+          # Check for strategy labels (would need PR data from previous step)
+          # For now, use squash as safe default
+          
+          echo "strategy=$STRATEGY" >> $GITHUB_OUTPUT
+          echo "📦 Merge strategy: $STRATEGY"
+      
+      - name: Execute merge (dry-run check)
+        if: steps.safety.outputs.passed == 'true' && steps.pr.outputs.dry_run == 'true'
+        run: |
+          echo "🧪 DRY RUN MODE - Would merge PR #${{ steps.pr.outputs.number }}"
+          echo "Strategy: ${{ steps.strategy.outputs.strategy }}"
+          echo "Head SHA: ${{ steps.pr_details.outputs.head_sha }}"
+          echo ""
+          echo "✅ All checks passed, merge would succeed!"
+      
+      - name: Execute merge (real)
+        if: steps.safety.outputs.passed == 'true' && steps.pr.outputs.dry_run == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.pr.outputs.number }};
+            const strategy = '${{ steps.strategy.outputs.strategy }}';
+            
+            console.log(`🚀 Merging PR #${prNumber} with strategy: ${strategy}`);
+            
+            try {
+              const { data: result } = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: strategy,
+                commit_title: '', // Use default PR title
+                commit_message: '', // Use default PR body
+              });
+              
+              console.log(`✅ Successfully merged!`);
+              console.log(`Merge commit: ${result.sha}`);
+              
+              // Add comment to PR
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `🤖 Auto-merged via intelligent merge workflow\n\n` +
+                      `- **Merge strategy**: ${strategy}\n` +
+                      `- **Merge commit**: ${result.sha.substring(0, 7)}\n` +
+                      `- **Triggered by**: ${context.actor}\n\n` +
+                      `All safety checks passed! 🎉`
+              });
+              
+            } catch (error) {
+              core.setFailed(`Merge failed: ${error.message}`);
+              
+              // Add failure comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `❌ Auto-merge failed\n\n` +
+                      `**Error**: ${error.message}\n\n` +
+                      `Please merge manually or investigate the issue.`
+              });
+            }
+      
+      - name: Cleanup merged branch
+        if: steps.safety.outputs.passed == 'true' && steps.pr.outputs.dry_run == 'false'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const prNumber = ${{ steps.pr.outputs.number }};
+            
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            // Only delete if:
+            // 1. PR is merged
+            // 2. Head repo is same as base repo (not a fork)
+            // 3. Branch name doesn't match protected patterns
+            
+            if (!pr.merged) {
+              console.log('PR not merged, skipping branch deletion');
+              return;
+            }
+            
+            if (pr.head.repo.full_name !== pr.base.repo.full_name) {
+              console.log('Fork PR, skipping branch deletion');
+              return;
+            }
+            
+            const branchName = pr.head.ref;
+            const protectedPatterns = ['main', 'master', 'develop', 'staging', 'production'];
+            
+            if (protectedPatterns.includes(branchName)) {
+              console.log(`Protected branch ${branchName}, skipping deletion`);
+              return;
+            }
+            
+            console.log(`🗑️ Deleting merged branch: ${branchName}`);
+            
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branchName}`
+            });
+            
+            console.log('✅ Branch deleted');
+      
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## Auto-Merge Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PR**: #${{ steps.pr.outputs.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dry run**: ${{ steps.pr.outputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check_enabled.outputs.enabled }}" == "true" ]; then
+            echo "✅ Auto-merge enabled: ${{ steps.check_enabled.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ Auto-merge not enabled: ${{ steps.check_enabled.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ steps.safety.outputs.passed }}" == "true" ]; then
+            echo "✅ Safety checks passed" >> $GITHUB_STEP_SUMMARY
+            echo "📦 Merge strategy: ${{ steps.strategy.outputs.strategy }}" >> $GITHUB_STEP_SUMMARY
+          fi

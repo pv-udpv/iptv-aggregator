@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
 #
-# pullrun.sh - Universal script for git pull + command execution
-#
-# Usage:
-#   ./pullrun.sh <command> [args...]
-#
-# Examples:
-#   ./pullrun.sh python scripts/extract_tvg_country.py
-#   ./pullrun.sh python scripts/download_epg.py
-#   ./pullrun.sh python scripts/parse_epg_pydantic.py epg/cache/cnn.us.xml
-#   ./pullrun.sh bash -c "python scripts/download_epg.py && python scripts/generate_m3u_with_epg.py"
+# pullrun.sh - Universal script with error handling and automated analysis
 #
 # Features:
-# - Always git pull first
-# - Activate .venv automatically
-# - Install missing deps if needed
-# - Show execution time
-# - Exit on any error
+# - Git pull + .venv activation + deps check
+# - On error: create error branch, commit logs, create GitHub issue
+# - Automated analysis via GitHub Actions (error-handler.yml)
+#
+# Environment:
+#   PULLRUN_NO_ERROR_HANDLING=1  - disable error handling
 
 set -euo pipefail
 
@@ -25,20 +17,26 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+MAGENTA='\033[0;35m'
+NC='\033[0m'
 
-# Banner
+# Config
+LOG_DIR=".pullrun_logs"
+mkdir -p "$LOG_DIR"
+
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+LOG_FILE="$LOG_DIR/run-$TIMESTAMP.log"
+
 echo -e "${BLUE}======================================================================${NC}"
-echo -e "${BLUE}🚀 pullrun.sh - Git Pull + Command Runner${NC}"
+echo -e "${BLUE}🚀 pullrun.sh${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 echo ""
 
-# Start time
 START_TIME=$(date +%s)
 
-# Step 1: Git pull
+# [1/4] Git pull
 echo -e "${YELLOW}[1/4] Git pull...${NC}"
-if git pull origin main --quiet; then
+if git pull origin main --quiet 2>&1 | tee -a "$LOG_FILE"; then
     echo -e "${GREEN}✓ Up to date${NC}"
 else
     echo -e "${RED}✗ Git pull failed${NC}"
@@ -46,66 +44,173 @@ else
 fi
 echo ""
 
-# Step 2: Check .venv
-echo -e "${YELLOW}[2/4] Checking virtual environment...${NC}"
+# [2/4] Check .venv
+echo -e "${YELLOW}[2/4] Checking .venv...${NC}"
 if [ ! -d ".venv" ]; then
-    echo -e "${RED}✗ .venv not found. Creating...${NC}"
-    python3 -m venv .venv
-    echo -e "${GREEN}✓ .venv created${NC}"
+    echo -e "${RED}⚠ Creating .venv...${NC}"
+    python3 -m venv .venv 2>&1 | tee -a "$LOG_FILE"
+    echo -e "${GREEN}✓ Created${NC}"
 else
-    echo -e "${GREEN}✓ .venv exists${NC}"
+    echo -e "${GREEN}✓ Exists${NC}"
 fi
 echo ""
 
-# Step 3: Activate .venv
-echo -e "${YELLOW}[3/4] Activating virtual environment...${NC}"
+# [3/4] Activate .venv
+echo -e "${YELLOW}[3/4] Activating .venv...${NC}"
 source .venv/bin/activate
 echo -e "${GREEN}✓ Activated${NC}"
 echo ""
 
-# Step 4: Check dependencies (optional)
+# [3.5/4] Check deps
 if [ -f "requirements.txt" ]; then
-    echo -e "${YELLOW}[3.5/4] Checking dependencies...${NC}"
-    
-    # Quick check if key packages exist
+    echo -e "${YELLOW}[3.5/4] Checking deps...${NC}"
     if python -c "import pydantic, httpx, rapidfuzz, pydantic_xml" 2>/dev/null; then
         echo -e "${GREEN}✓ All deps installed${NC}"
     else
-        echo -e "${YELLOW}⚠ Installing missing dependencies...${NC}"
+        echo -e "${YELLOW}⚠ Installing...${NC}"
         if command -v uv &> /dev/null; then
-            uv pip install -r requirements.txt --quiet
+            uv pip install -r requirements.txt --quiet 2>&1 | tee -a "$LOG_FILE"
         else
-            pip install -r requirements.txt --quiet
+            pip install -r requirements.txt --quiet 2>&1 | tee -a "$LOG_FILE"
         fi
-        echo -e "${GREEN}✓ Dependencies installed${NC}"
+        echo -e "${GREEN}✓ Installed${NC}"
     fi
     echo ""
 fi
 
-# Step 5: Run command
-echo -e "${YELLOW}[4/4] Running command...${NC}"
+# [4/4] Run command
+echo -e "${YELLOW}[4/4] Running...${NC}"
 echo -e "${BLUE}Command: $*${NC}"
+echo -e "${BLUE}Log: $LOG_FILE${NC}"
 echo ""
 echo -e "${BLUE}======================================================================${NC}"
 echo ""
 
-# Execute
-if "$@"; then
+COMMAND="$*"
+COMMAND_HASH=$(echo "$COMMAND" | md5sum | cut -d' ' -f1 | head -c 8)
+
+if "$@" 2>&1 | tee -a "$LOG_FILE"; then
+    # SUCCESS
     echo ""
     echo -e "${BLUE}======================================================================${NC}"
-    
-    # Calculate duration
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-    
     echo -e "${GREEN}✓ Success${NC}"
     echo -e "${GREEN}⏱  Duration: ${DURATION}s${NC}"
     echo -e "${BLUE}======================================================================${NC}"
     exit 0
 else
+    # FAILURE
+    EXIT_CODE=$?
     echo ""
     echo -e "${BLUE}======================================================================${NC}"
-    echo -e "${RED}✗ Command failed${NC}"
+    echo -e "${RED}✗ Failed (exit $EXIT_CODE)${NC}"
     echo -e "${BLUE}======================================================================${NC}"
-    exit 1
+    echo ""
+    
+    # Error handling
+    if [ "${PULLRUN_NO_ERROR_HANDLING:-0}" = "1" ]; then
+        echo -e "${YELLOW}Error handling disabled${NC}"
+        exit $EXIT_CODE
+    fi
+    
+    echo -e "${MAGENTA}======================================================================${NC}"
+    echo -e "${MAGENTA}🔧 Error Handling${NC}"
+    echo -e "${MAGENTA}======================================================================${NC}"
+    echo ""
+    
+    # Create error branch
+    ERROR_BRANCH="error/$TIMESTAMP-$COMMAND_HASH"
+    echo -e "${YELLOW}[1/4] Creating branch: $ERROR_BRANCH${NC}"
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    git checkout -b "$ERROR_BRANCH" 2>&1 || true
+    echo -e "${GREEN}✓ Created${NC}"
+    echo ""
+    
+    # Create error report
+    echo -e "${YELLOW}[2/4] Creating error report...${NC}"
+    ERROR_FILE="$LOG_DIR/ERROR-$TIMESTAMP.md"
+    cat > "$ERROR_FILE" << EOF
+# Error Report
+
+**Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+**Command:** \`$COMMAND\`
+**Exit Code:** $EXIT_CODE
+**Branch:** $ERROR_BRANCH
+
+## Output (last 50 lines)
+
+\`\`\`
+$(tail -50 "$LOG_FILE")
+\`\`\`
+
+## Environment
+
+- Python: $(python --version 2>&1 || echo "N/A")
+- Directory: $(pwd)
+
+## Next Steps
+
+1. Review: \`cat $LOG_FILE\`
+2. Fix locally
+3. Test: \`./pullrun.sh $COMMAND\`
+4. Merge: \`git checkout main && git merge $ERROR_BRANCH\`
+
+---
+*Auto-generated by pullrun.sh*
+EOF
+    echo -e "${GREEN}✓ Saved: $ERROR_FILE${NC}"
+    echo ""
+    
+    # Commit
+    echo -e "${YELLOW}[3/4] Committing...${NC}"
+    git add "$LOG_FILE" "$ERROR_FILE" 2>&1 || true
+    git commit -m "error: $COMMAND failed" -m "Exit code: $EXIT_CODE" 2>&1 || true
+    echo -e "${GREEN}✓ Committed${NC}"
+    echo ""
+    
+    # Create GitHub issue
+    echo -e "${YELLOW}[4/4] Creating GitHub issue...${NC}"
+    if command -v gh &> /dev/null; then
+        ISSUE_TITLE="[pullrun] $(echo "$COMMAND" | cut -c1-60)"
+        ISSUE_BODY="**Command:** \`$COMMAND\`
+**Exit Code:** $EXIT_CODE
+**Branch:** \`$ERROR_BRANCH\`
+**Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+## Output
+
+\`\`\`
+$(tail -30 "$LOG_FILE")
+\`\`\`
+
+See \`$ERROR_FILE\` for full details.
+
+---
+
+**Automated analysis will be posted shortly by Error Handler Agent (GPT-4o-mini)**"
+        
+        if gh issue create \
+            --title "$ISSUE_TITLE" \
+            --body "$ISSUE_BODY" \
+            --label "bug,pullrun-error,automated" 2>&1; then
+            echo -e "${GREEN}✓ Issue created${NC}"
+            echo -e "${GREEN}  → Automated analysis will be posted by GitHub Actions${NC}"
+        else
+            echo -e "${YELLOW}⚠ Failed (gh CLI not authenticated?)${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠ gh CLI not available${NC}"
+    fi
+    echo ""
+    
+    # Back to main
+    git checkout "$CURRENT_BRANCH" 2>&1 || true
+    
+    echo -e "${MAGENTA}======================================================================${NC}"
+    echo -e "${RED}Error branch:${NC} $ERROR_BRANCH"
+    echo -e "${RED}Error report:${NC} $ERROR_FILE"
+    echo -e "${MAGENTA}======================================================================${NC}"
+    
+    exit $EXIT_CODE
 fi

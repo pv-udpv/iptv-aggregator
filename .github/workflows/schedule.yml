@@ -1,0 +1,58 @@
+name: Scheduled Data Refresh
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    name: Refresh IPTV Data
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Run data refresh
+        run: |
+          python demo.py
+      
+      - name: Generate report
+        run: |
+          echo "# IPTV Data Refresh Report" > report.md
+          echo "" >> report.md
+          echo "**Date**: $(date -u)" >> report.md
+          echo "" >> report.md
+          echo "## Statistics" >> report.md
+          echo "" >> report.md
+          echo "- Channels: $(sqlite3 output/demo.db 'SELECT COUNT(*) FROM channels;')" >> report.md
+          echo "- Streams: $(sqlite3 output/demo.db 'SELECT COUNT(*) FROM streams;')" >> report.md
+          echo "" >> report.md
+          echo "## Top Countries" >> report.md
+          echo "" >> report.md
+          sqlite3 -markdown output/demo.db "SELECT country, COUNT(*) as count FROM channels WHERE country IS NOT NULL GROUP BY country ORDER BY count DESC LIMIT 10;" >> report.md
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-refresh-${{ github.run_number }}
+          path: |
+            output/
+            report.md
+          retention-days: 30
+      
+      - name: Send notification
+        if: failure()
+        run: |
+          echo "❌ Scheduled data refresh failed!"
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

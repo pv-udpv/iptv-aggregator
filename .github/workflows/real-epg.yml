@@ -1,0 +1,177 @@
+name: Real EPG Scraping
+
+on:
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      days:
+        description: 'Days of EPG to grab'
+        required: false
+        default: '3'
+  schedule:
+    # Run twice daily at 06:00 and 18:00 UTC
+    - cron: '0 6,18 * * *'
+
+jobs:
+  scrape-real-epg:
+    name: 🌐 Scrape Real EPG Data
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install aiohttp pydantic lxml sqlalchemy beautifulsoup4 python-dateutil
+      
+      - name: 🌐 Run real EPG scraping
+        run: |
+          echo "🚀 Starting real EPG scrape..."
+          python demo_real_epg.py
+        timeout-minutes: 10
+      
+      - name: 📊 Analyze results
+        run: |
+          echo "=== EPG Statistics ==="
+          sqlite3 output/real_epg.db "SELECT COUNT(*) as total_programmes FROM programmes;"
+          echo ""
+          echo "=== Programmes by Channel ==="
+          sqlite3 -header -column output/real_epg.db "
+            SELECT channel_id, COUNT(*) as count 
+            FROM programmes 
+            GROUP BY channel_id 
+            ORDER BY count DESC;
+          "
+          echo ""
+          echo "=== Sample Programmes ==="
+          sqlite3 -header -column output/real_epg.db "
+            SELECT channel_id, title, datetime(start) as start_time 
+            FROM programmes 
+            ORDER BY start 
+            LIMIT 10;
+          "
+          echo ""
+          echo "=== EPG Report ==="
+          cat output/epg_report.json | python -m json.tool
+      
+      - name: 📝 Generate summary
+        id: summary
+        run: |
+          TOTAL_PROGS=$(sqlite3 output/real_epg.db "SELECT COUNT(*) FROM programmes;")
+          CHANNELS=$(sqlite3 output/real_epg.db "SELECT COUNT(DISTINCT channel_id) FROM programmes;")
+          
+          echo "total_programmes=$TOTAL_PROGS" >> $GITHUB_OUTPUT
+          echo "channels_with_epg=$CHANNELS" >> $GITHUB_OUTPUT
+          
+          # Get date range
+          MIN_DATE=$(sqlite3 output/real_epg.db "SELECT MIN(start) FROM programmes;")
+          MAX_DATE=$(sqlite3 output/real_epg.db "SELECT MAX(start) FROM programmes;")
+          
+          echo "date_range=$MIN_DATE to $MAX_DATE" >> $GITHUB_OUTPUT
+      
+      - name: 📤 Upload EPG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-epg-data-${{ github.run_number }}
+          path: |
+            output/real_epg.db
+            output/uk_with_epg.m3u
+            output/epg_report.json
+          retention-days: 14
+      
+      - name: ✅ Success summary
+        run: |
+          echo "🎉 Real EPG scraping completed!"
+          echo ""
+          echo "📊 Results:"
+          echo "  - Total programmes: ${{ steps.summary.outputs.total_programmes }}"
+          echo "  - Channels with EPG: ${{ steps.summary.outputs.channels_with_epg }}"
+          echo "  - Date range: ${{ steps.summary.outputs.date_range }}"
+          echo ""
+          echo "📦 Download artifacts from Actions tab"
+      
+      - name: 🚨 Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Real EPG scraping failed!"
+          echo "Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+  
+  validate-epg:
+    name: ✅ Validate EPG Quality
+    needs: scrape-real-epg
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: real-epg-data-${{ github.run_number }}
+          path: output/
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: 🔍 Validate EPG data
+        run: |
+          pip install sqlalchemy
+          
+          python << 'EOF'
+          import sqlite3
+          import sys
+          from datetime import datetime, timedelta
+          
+          conn = sqlite3.connect('output/real_epg.db')
+          cursor = conn.cursor()
+          
+          # Check 1: At least 50 programmes
+          cursor.execute("SELECT COUNT(*) FROM programmes")
+          total = cursor.fetchone()[0]
+          print(f"✅ Check 1: Total programmes = {total}")
+          
+          if total < 50:
+              print("❌ FAIL: Expected at least 50 programmes")
+              sys.exit(1)
+          
+          # Check 2: At least 2 channels
+          cursor.execute("SELECT COUNT(DISTINCT channel_id) FROM programmes")
+          channels = cursor.fetchone()[0]
+          print(f"✅ Check 2: Channels with EPG = {channels}")
+          
+          if channels < 2:
+              print("❌ FAIL: Expected at least 2 channels")
+              sys.exit(1)
+          
+          # Check 3: Programmes have valid times
+          cursor.execute("""
+              SELECT COUNT(*) FROM programmes 
+              WHERE start IS NOT NULL AND stop IS NOT NULL
+          """)
+          valid_times = cursor.fetchone()[0]
+          print(f"✅ Check 3: Programmes with valid times = {valid_times}")
+          
+          # Check 4: Programmes in future/near past
+          now = datetime.now()
+          past_limit = now - timedelta(days=1)
+          future_limit = now + timedelta(days=7)
+          
+          cursor.execute("""
+              SELECT COUNT(*) FROM programmes 
+              WHERE start BETWEEN ? AND ?
+          """, (past_limit.isoformat(), future_limit.isoformat()))
+          
+          recent = cursor.fetchone()[0]
+          print(f"✅ Check 4: Recent/upcoming programmes = {recent}")
+          
+          conn.close()
+          
+          print("\n✅ All EPG quality checks passed!")
+          EOF

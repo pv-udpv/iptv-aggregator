@@ -1,0 +1,14 @@
+# Core dependencies
+aiohttp>=3.9
+pydantic>=2.5
+lxml>=5.1
+sqlalchemy>=2.0
+rapidfuzz>=3.5
+beautifulsoup4>=4.12
+python-dateutil>=2.8
+
+# Development
+pytest>=7.4
+pytest-asyncio>=0.21
+ruff>=0.1
+mypy>=1.7

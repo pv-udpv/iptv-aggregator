@@ -1,0 +1,94 @@
+name: Load iptv-org Data
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      include_streams:
+        description: 'Include streams data (larger download)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  load-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      
+      - name: Setup Python environment
+        run: |
+          uv venv
+          uv sync
+      
+      - name: Load iptv-org channels
+        run: |
+          source .venv/bin/activate
+          python tools/iptv_org_extractor.py \
+            --output output/raw \
+            --include channels,guides,categories,countries,languages,regions
+      
+      - name: Load iptv-org streams
+        if: ${{ inputs.include_streams || github.event_name == 'schedule' }}
+        run: |
+          source .venv/bin/activate
+          python tools/iptv_org_extractor.py \
+            --output output/raw \
+            --include streams \
+            --max-streams 50000
+      
+      - name: Generate data summary
+        run: |
+          source .venv/bin/activate
+          python -c "
+import pandas as pd
+from pathlib import Path
+
+raw_dir = Path('output/raw')
+print('\n' + '='*60)
+print('iptv-org Data Summary')
+print('='*60)
+
+for csv_file in raw_dir.glob('*.csv'):
+    df = pd.read_csv(csv_file)
+    print(f'{csv_file.name:30} {len(df):>8} rows')
+
+print('='*60)
+          "
+      
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -B data/iptv-org-auto
+          git add output/raw/
+          
+          git commit -m "data: update iptv-org dataset
+          
+          Workflow: ${{ github.workflow }}
+          Run: ${{ github.run_number }}
+          Time: $(date -u +'%Y-%m-%d %H:%M UTC')" \
+          || echo "No changes to commit"
+          
+          git push -f origin data/iptv-org-auto
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iptv-org-data-${{ github.run_number }}
+          path: output/raw/
+          retention-days: 7

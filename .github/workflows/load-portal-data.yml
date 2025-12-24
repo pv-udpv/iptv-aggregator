@@ -1,0 +1,124 @@
+name: Load IPTVPortal Data
+
+on:
+  schedule:
+    - cron: '15 2 * * *'  # Daily at 2:15 AM UTC (after iptv-org)
+  workflow_dispatch:
+    inputs:
+      active_only:
+        description: 'Load only active channels'
+        type: boolean
+        default: true
+      limit:
+        description: 'Max channels to load (0 = no limit)'
+        type: number
+        default: 0
+
+permissions:
+  contents: write
+
+jobs:
+  load-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      
+      - name: Setup Python environment
+        run: |
+          uv venv
+          uv sync
+      
+      - name: Validate session
+        env:
+          IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
+        run: |
+          source .venv/bin/activate
+          python tools/check_iptvportal_session.py || {
+            echo "::error::IPTVPortal session expired. Update IPTVPORTAL_SESSION_ID secret."
+            exit 1
+          }
+      
+      - name: Load portal channels
+        env:
+          IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
+        run: |
+          source .venv/bin/activate
+          
+          ACTIVE_FLAG="--active-only"
+          if [ "${{ inputs.active_only }}" = "false" ]; then
+            ACTIVE_FLAG=""
+          fi
+          
+          LIMIT_FLAG=""
+          if [ "${{ inputs.limit }}" != "0" ]; then
+            LIMIT_FLAG="--limit ${{ inputs.limit }}"
+          fi
+          
+          python tools/iptvportal_loader.py \
+            --output output/raw/portal_channels.csv \
+            $ACTIVE_FLAG \
+            $LIMIT_FLAG
+      
+      - name: Load channel stats (optional)
+        if: ${{ secrets.CLICKHOUSE_HOST != '' }}
+        env:
+          IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
+        run: |
+          source .venv/bin/activate
+          python tools/iptvportal_loader.py \
+            --output output/raw/portal_stats.csv \
+            --mode stats \
+            --days 30
+      
+      - name: Generate data summary
+        run: |
+          source .venv/bin/activate
+          python -c "
+import pandas as pd
+from pathlib import Path
+
+raw_dir = Path('output/raw')
+print('\n' + '='*60)
+print('IPTVPortal Data Summary')
+print('='*60)
+
+for csv_file in raw_dir.glob('portal_*.csv'):
+    df = pd.read_csv(csv_file)
+    print(f'{csv_file.name:30} {len(df):>8} rows')
+
+print('='*60)
+          "
+      
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -B data/portal-auto
+          git add output/raw/portal_*.csv
+          
+          git commit -m "data: update IPTVPortal dataset
+          
+          Workflow: ${{ github.workflow }}
+          Run: ${{ github.run_number }}
+          Time: $(date -u +'%Y-%m-%d %H:%M UTC')" \
+          || echo "No changes to commit"
+          
+          git push -f origin data/portal-auto
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portal-data-${{ github.run_number }}
+          path: output/raw/portal_*.csv
+          retention-days: 7

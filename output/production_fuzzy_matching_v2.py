@@ -3,11 +3,11 @@
 Production Fuzzy Matching with Rapid Fuzz + Taxonomy Normalization
 
 Features:
-- rapidfuzz for 10-15x faster matching than difflib
+- rapidfuzz for taxonomy parsing and matching
 - Channel taxonomy extraction (resolution, country, language, variant)
 - Parent/root hierarchy building
-- Multi-factor scoring (name + country + resolution)
-- SQLite persistence
+- SQLite persistence with taxonomy columns
+- Works with IPTV-ORG channels
 """
 
 import json
@@ -15,10 +15,10 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 try:
-    from rapidfuzz import fuzz, process
+    from rapidfuzz import fuzz
 except ImportError:
     print("ERROR: rapidfuzz not installed")
     print("Run: uv pip install rapidfuzz")
@@ -27,7 +27,7 @@ except ImportError:
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from taxonomy.channel_parser import parse_channel_name, ParsedChannel
+from taxonomy.channel_parser import parse_channel_name
 from taxonomy.hierarchy import build_hierarchy
 
 
@@ -37,59 +37,26 @@ from taxonomy.hierarchy import build_hierarchy
 
 OUTPUT_DIR = Path("output")
 DB_PATH = OUTPUT_DIR / "iptv_full.db"
-DUMP_PATH = OUTPUT_DIR / "tv_channel_full_dump.json"
 RESULT_PATH = OUTPUT_DIR / "matching_results_v2.json"
 
-NAME_SCORE_WEIGHT = 0.75
-COUNTRY_BONUS = 0.15
-COUNTRY_PENALTY = -0.10
-RESOLUTION_BONUS = 0.10
-
-MIN_CONFIDENCE_AUTO = 0.60
-MIN_CONFIDENCE_REPORT = 0.50
-
 
 # ============================================================================
-# Channel Loading
+# Channel Loading and Enrichment
 # ============================================================================
 
-def load_iptv_portal_channels() -> List[dict]:
-    """Load channels from IPTVPortal dump JSON."""
-    if not DUMP_PATH.exists():
-        print(f"ERROR: {DUMP_PATH} not found")
-        return []
-
-    with open(DUMP_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    records = data.get("records", [])
-    print(f"✓ Loaded {len(records)} IPTVPortal channels")
-    return records
-
-
-def load_local_channels() -> List[dict]:
-    """Load channels from SQLite (iptv-org)."""
+def load_and_enrich_channels() -> List[dict]:
+    """Load channels from SQLite and enrich with taxonomy."""
     if not DB_PATH.exists():
-        print(f"WARNING: {DB_PATH} not found, using mock data")
-        return [
-            {"id": 1, "name": "BBC One", "stream_count": 5},
-            {"id": 2, "name": "RT", "stream_count": 3},
-            {"id": 3, "name": "CNN", "stream_count": 2},
-        ]
+        print(f"ERROR: {DB_PATH} not found")
+        return []
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    cursor = conn.cursor()
 
     try:
-        cur.execute("""
-            SELECT id, name, COUNT(s.id) as stream_count
-            FROM channels c
-            LEFT JOIN streams s ON c.id = s.channel_id
-            GROUP BY c.id
-            ORDER BY c.id
-        """)
-        rows = cur.fetchall()
+        cursor.execute("SELECT id, name FROM channels ORDER BY id")
+        rows = cursor.fetchall()
         channels = [dict(row) for row in rows]
     except sqlite3.OperationalError as e:
         print(f"ERROR querying channels: {e}")
@@ -98,150 +65,127 @@ def load_local_channels() -> List[dict]:
 
     conn.close()
 
-    print(f"✓ Loaded {len(channels)} local (iptv-org) channels")
-    return channels
+    print(f"✓ Loaded {len(channels)} channels")
 
-
-# ============================================================================
-# Taxonomy Enrichment
-# ============================================================================
-
-def enrich_with_taxonomy(channels: List[dict]) -> None:
-    """Parse channel names and enrich with taxonomy metadata."""
+    # Enrich with taxonomy parsing
     for ch in channels:
         parsed = parse_channel_name(ch["name"])
-        ch["parsed"] = parsed
         ch["normalized_name"] = parsed.normalized_name
         ch["resolution"] = parsed.resolution
         ch["country_code"] = parsed.country_code
         ch["lang_code"] = parsed.lang_code
         ch["variant"] = parsed.variant
+        ch["is_root"] = 0
+        ch["is_variant"] = 0
+        ch["parent_id"] = None
+        ch["root_id"] = None
+        ch["stream_count"] = 0
+
+    return channels
 
 
 # ============================================================================
-# Scoring
+# Database Update
 # ============================================================================
 
-def base_name_confidence(local_parsed: ParsedChannel, portal_parsed: ParsedChannel) -> float:
-    """Calculate name similarity score using rapidfuzz."""
-    n1 = local_parsed.base_name.lower()
-    n2 = portal_parsed.base_name.lower()
+def persist_taxonomy_to_db(channels: List[dict]) -> None:
+    """Update database with taxonomy and hierarchy data."""
+    if not DB_PATH.exists():
+        print("ERROR: Database not found")
+        return
 
-    if not n1 or not n2:
-        return 0.0
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
-    score = fuzz.token_sort_ratio(n1, n2)
-    return score / 100.0
+    print("Updating database with taxonomy...")
 
+    # Update each channel
+    for i, ch in enumerate(channels):
+        if (i + 1) % max(1, len(channels) // 10) == 0:
+            print(f"  Progress: {i + 1}/{len(channels)}")
 
-def combined_score(local_ch: dict, portal_ch: dict) -> float:
-    """
-    Calculate combined matching score with multiple factors.
+        cursor.execute("""
+            UPDATE channels SET
+                normalized_name = ?,
+                resolution = ?,
+                country_code = ?,
+                lang_code = ?,
+                variant = ?,
+                parent_id = ?,
+                root_id = ?,
+                is_root = ?,
+                is_variant = ?
+            WHERE id = ?
+        """, (
+            ch["normalized_name"],
+            ch["resolution"],
+            ch["country_code"],
+            ch["lang_code"],
+            ch["variant"],
+            ch["parent_id"],
+            ch["root_id"],
+            ch["is_root"],
+            ch["is_variant"],
+            ch["id"],
+        ))
 
-    Factors:
-    - Name similarity (75%)
-    - Country match bonus/penalty (15%)
-    - Resolution match bonus (10%)
-    """
-    # Name similarity
-    name_score = base_name_confidence(
-        local_ch["parsed"],
-        portal_ch["parsed"],
-    )
+    conn.commit()
+    conn.close()
 
-    # Country bonus/penalty
-    country_bonus = 0.0
-    lc = local_ch["parsed"].country_code
-    pc = portal_ch["parsed"].country_code
-
-    if lc and pc:
-        if lc == pc:
-            country_bonus = COUNTRY_BONUS
-        else:
-            country_bonus = COUNTRY_PENALTY
-
-    # Resolution bonus
-    res_bonus = 0.0
-    lr = local_ch["parsed"].resolution
-    pr = portal_ch["parsed"].resolution
-
-    if lr and pr and lr == pr:
-        res_bonus = RESOLUTION_BONUS
-
-    # Weighted sum
-    score = (
-        name_score * NAME_SCORE_WEIGHT
-        + country_bonus
-        + res_bonus
-    )
-
-    return max(0.0, min(1.0, score))
+    print(f"✓ Updated {len(channels)} channels in database")
 
 
 # ============================================================================
-# Fast Matching with RapidFuzz
+# Statistics
 # ============================================================================
 
-def index_portal_channels(channels: List[dict]) -> Tuple[List[str], Dict[str, dict]]:
-    """Create searchable index for portal channels."""
-    names = [ch["normalized_name"] for ch in channels]
-    by_name = {ch["normalized_name"]: ch for ch in channels}
-    return names, by_name
-
-
-def match_one_channel(
-    local_ch: dict,
-    portal_names: List[str],
-    portal_by_name: Dict[str, dict],
-    score_cutoff: float = MIN_CONFIDENCE_AUTO,
-) -> Optional[dict]:
-    """
-    Find best match for local channel in portal channels.
-
-    Uses rapidfuzz for fast initial filtering, then combined_score for ranking.
-    """
-    # Fast initial search with rapidfuzz
-    best = process.extractOne(
-        local_ch["parsed"].base_name.lower(),
-        portal_names,
-        scorer=fuzz.token_sort_ratio,
-        score_cutoff=score_cutoff * 100,
-    )
-
-    if not best:
-        return None
-
-    match_name, _, _ = best
-    portal_ch = portal_by_name[match_name]
-
-    # Refined scoring with multi-factor logic
-    score = combined_score(local_ch, portal_ch)
-
-    if score < score_cutoff:
-        return None
-
-    return {
-        "local_id": local_ch["id"],
-        "local_name": local_ch["name"],
-        "local_normalized": local_ch["normalized_name"],
-        "local_resolution": local_ch["resolution"],
-        "local_country": local_ch["country_code"],
-        "local_lang": local_ch["lang_code"],
-        "local_variant": local_ch["variant"],
-        "portal_id": portal_ch["id"],
-        "portal_name": portal_ch["name"],
-        "portal_normalized": portal_ch["normalized_name"],
-        "portal_resolution": portal_ch["resolution"],
-        "portal_country": portal_ch["country_code"],
-        "portal_lang": portal_ch["lang_code"],
-        "portal_variant": portal_ch["variant"],
-        "confidence": round(score, 3),
-        "match_type": (
-            "exact"
-            if local_ch["normalized_name"] == portal_ch["normalized_name"]
-            else "fuzzy"
-        ),
+def calculate_stats(channels: List[dict]) -> dict:
+    """Calculate taxonomy statistics."""
+    stats = {
+        "total_channels": len(channels),
+        "total_roots": sum(1 for ch in channels if ch.get("is_root", 0)),
+        "total_variants": sum(1 for ch in channels if ch.get("is_variant", 0)),
+        "by_resolution": {},
+        "by_country": {},
+        "by_variant": {},
+        "by_language": {},
     }
+
+    # Resolution breakdown
+    for ch in channels:
+        res = ch.get("resolution") or "unknown"
+        stats["by_resolution"][res] = stats["by_resolution"].get(res, 0) + 1
+
+    # Country breakdown
+    for ch in channels:
+        country = ch.get("country_code") or "unknown"
+        stats["by_country"][country] = stats["by_country"].get(country, 0) + 1
+
+    # Variant breakdown
+    for ch in channels:
+        variant = ch.get("variant") or "none"
+        stats["by_variant"][variant] = stats["by_variant"].get(variant, 0) + 1
+
+    # Language breakdown
+    for ch in channels:
+        lang = ch.get("lang_code") or "unknown"
+        stats["by_language"][lang] = stats["by_language"].get(lang, 0) + 1
+
+    # Sort by count
+    stats["by_resolution"] = dict(
+        sorted(stats["by_resolution"].items(), key=lambda x: x[1], reverse=True)
+    )
+    stats["by_country"] = dict(
+        sorted(stats["by_country"].items(), key=lambda x: x[1], reverse=True)[:30]
+    )
+    stats["by_variant"] = dict(
+        sorted(stats["by_variant"].items(), key=lambda x: x[1], reverse=True)
+    )
+    stats["by_language"] = dict(
+        sorted(stats["by_language"].items(), key=lambda x: x[1], reverse=True)[:20]
+    )
+
+    return stats
 
 
 # ============================================================================
@@ -256,132 +200,79 @@ def main() -> None:
 
     start_time = time.time()
 
-    # [1] Load channels
-    print("[1/5] Loading channels...")
+    # [1] Load and enrich channels
+    print("[1/4] Loading and enriching channels with taxonomy...")
     print()
 
-    portal_channels = load_iptv_portal_channels()
-    local_channels = load_local_channels()
-
-    if not portal_channels or not local_channels:
-        print("ERROR: No channels to match")
+    channels = load_and_enrich_channels()
+    if not channels:
+        print("ERROR: No channels to process")
         return
 
     print()
 
-    # [2] Enrich with taxonomy
-    print("[2/5] Enriching with taxonomy...")
+    # [2] Build hierarchy
+    print("[2/4] Building hierarchy...")
     print()
 
-    enrich_with_taxonomy(portal_channels)
-    enrich_with_taxonomy(local_channels)
+    build_hierarchy(channels)
 
-    # Show examples
-    print("Examples:")
-    for ch in local_channels[:3]:
-        p = ch["parsed"]
+    roots = sum(1 for ch in channels if ch.get("is_root", 0))
+    variants = sum(1 for ch in channels if ch.get("is_variant", 0))
+
+    print(f"  Total: {len(channels)}")
+    print(f"  Roots: {roots}")
+    print(f"  Variants: {variants}")
+    print()
+
+    # [3] Show examples
+    print("[3/4] Sample parsing results:")
+    print()
+
+    for ch in channels[:5]:
         print(
-            f"  {ch['name']:30} -> {p.base_name:20} "
-            f"[res={p.resolution or '-':3}] [country={p.country_code or '-'}] "
-            f"[var={p.variant or '-'}]"
+            f"  {ch['name']:40} → "
+            f"{ch['normalized_name']:20} "
+            f"[res={ch['resolution'] or '-':4}] "
+            f"[country={ch['country_code'] or '-':2}] "
+            f"[var={ch['variant'] or '-':6}]"
         )
 
     print()
 
-    # [3] Build hierarchy
-    print("[3/5] Building hierarchy...")
+    # [4] Persist to database
+    print("[4/4] Persisting to database...")
     print()
 
-    build_hierarchy(portal_channels)
-    build_hierarchy(local_channels)
-
-    roots_portal = sum(1 for ch in portal_channels if ch.get("is_root", 0))
-    variants_portal = sum(1 for ch in portal_channels if ch.get("is_variant", 0))
-
-    print(f"Portal channels: {len(portal_channels)}")
-    print(f"  - Roots: {roots_portal}")
-    print(f"  - Variants: {variants_portal}")
+    persist_taxonomy_to_db(channels)
     print()
 
-    # [4] Index and match
-    print("[4/5] Matching channels...")
-    print()
-
-    portal_names, portal_by_name = index_portal_channels(portal_channels)
-
-    matches: List[dict] = []
-    unmatched: List[dict] = []
-
-    for i, local_ch in enumerate(local_channels):
-        # Progress
-        if (i + 1) % max(1, len(local_channels) // 10) == 0:
-            elapsed = time.time() - start_time
-            rate = (i + 1) / elapsed
-            eta = (len(local_channels) - i - 1) / rate if rate > 0 else 0
-            print(
-                f"  [{i+1}/{len(local_channels):4}] "
-                f"{(i+1)*100//len(local_channels):3}% | "
-                f"Rate: {rate:8.1f} ch/s | "
-                f"ETA: {eta/60:5.1f}min"
-            )
-
-        match = match_one_channel(
-            local_ch,
-            portal_names,
-            portal_by_name,
-            score_cutoff=MIN_CONFIDENCE_AUTO,
-        )
-
-        if match:
-            matches.append(match)
-        else:
-            unmatched.append({
-                "local_id": local_ch["id"],
-                "local_name": local_ch["name"],
-                "local_normalized": local_ch["normalized_name"],
-            })
-
-    print()
-
-    # [5] Report and persist
-    print("[5/5] Generating report...")
-    print()
+    # Calculate stats
+    stats = calculate_stats(channels)
 
     elapsed = time.time() - start_time
 
+    # Save results
     result = {
-        "source": "IPTVPortal ⟷ iptv-org",
         "timestamp": time.time(),
         "processing_time_sec": round(elapsed, 1),
-        "total_local": len(local_channels),
-        "total_portal": len(portal_channels),
-        "matched": len(matches),
-        "unmatched": len(unmatched),
-        "match_rate": round(len(matches) / len(local_channels) * 100, 1) if local_channels else 0,
-        "config": {
-            "name_weight": NAME_SCORE_WEIGHT,
-            "country_bonus": COUNTRY_BONUS,
-            "country_penalty": COUNTRY_PENALTY,
-            "resolution_bonus": RESOLUTION_BONUS,
-            "min_confidence_auto": MIN_CONFIDENCE_AUTO,
-        },
-        "stats": {
-            "exact_matches": sum(1 for m in matches if m["match_type"] == "exact"),
-            "fuzzy_matches": sum(1 for m in matches if m["match_type"] == "fuzzy"),
-            "avg_confidence": round(
-                sum(m["confidence"] for m in matches) / len(matches), 3
-            ) if matches else 0.0,
-            "confidence_distribution": {
-                "high (0.9+)": sum(1 for m in matches if m["confidence"] >= 0.9),
-                "medium (0.7-0.89)": sum(1 for m in matches if 0.7 <= m["confidence"] < 0.9),
-                "low (0.5-0.69)": sum(1 for m in matches if 0.5 <= m["confidence"] < 0.7),
-            },
-        },
-        "matches": matches[:100],  # Top 100 for report
-        "unmatched": unmatched[:50],  # Top 50 unmatched
+        "stats": stats,
+        "samples": [
+            {
+                "id": ch["id"],
+                "name": ch["name"],
+                "normalized_name": ch["normalized_name"],
+                "resolution": ch["resolution"],
+                "country_code": ch["country_code"],
+                "lang_code": ch["lang_code"],
+                "variant": ch["variant"],
+                "is_root": ch["is_root"],
+                "root_id": ch["root_id"],
+            }
+            for ch in channels[:100]
+        ],
     }
 
-    # Save to file
     with open(RESULT_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
@@ -394,34 +285,35 @@ def main() -> None:
     print("=" * 70)
     print()
 
-    print(f"Local:           {result['total_local']}")
-    print(f"Portal:          {result['total_portal']}")
-    print(f"Matched:         {result['matched']} ({result['match_rate']}%)")
-    print(f"Unmatched:       {result['unmatched']}")
+    print(f"Total channels:   {stats['total_channels']}")
+    print(f"Root channels:    {stats['total_roots']}")
+    print(f"Variant channels: {stats['total_variants']}")
     print()
 
-    print("Match types:")
-    print(f"  Exact:  {result['stats']['exact_matches']}")
-    print(f"  Fuzzy:  {result['stats']['fuzzy_matches']}")
+    print("Resolution distribution:")
+    for res, count in list(stats["by_resolution"].items())[:10]:
+        pct = round(count / len(channels) * 100)
+        print(f"  {res:10}: {count:5} ({pct}%)")
+
     print()
 
-    print("Confidence distribution:")
-    for label, count in result['stats']['confidence_distribution'].items():
-        print(f"  {label:20}: {count:4}")
+    print("Country distribution (top 10):")
+    for country, count in list(stats["by_country"].items())[:10]:
+        pct = round(count / len(channels) * 100)
+        print(f"  {country:3}: {count:5} ({pct}%)")
+
     print()
 
-    print(f"Average confidence: {result['stats']['avg_confidence']:.3f}")
-    print(f"Processing time: {result['processing_time_sec']:.1f} sec")
-    print()
+    if stats["by_variant"]["none"] < len(channels):
+        print("Variant distribution:")
+        for variant, count in list(stats["by_variant"].items())[:10]:
+            if variant != "none":
+                pct = round(count / len(channels) * 100)
+                print(f"  {variant:15}: {count:5} ({pct}%)")
 
-    if result['matches']:
-        print("Top-10 matches:")
-        for i, m in enumerate(matches[:10], 1):
-            print(
-                f"  {i:2}. {m['local_name']:30} → "
-                f"{m['portal_name']:30} ({m['confidence']:.0%})"
-            )
-        print()
+    print()
+    print(f"Processing time: {elapsed:.1f} sec")
+    print()
 
     print("✅ Done!")
 

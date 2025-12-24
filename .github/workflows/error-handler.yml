@@ -1,0 +1,162 @@
+name: Error Handler Agent
+
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+
+jobs:
+  analyze-error:
+    # Trigger only for pullrun-error labeled issues
+    if: |
+      (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'pullrun-error')) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'pullrun-error') ||
+      (github.event.action == 'created' && contains(github.event.comment.body, '@copilot analyze'))
+    
+    runs-on: ubuntu-latest
+    
+    permissions:
+      issues: write
+      contents: read
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Extract error info
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = issue.body || '';
+            
+            // Extract command, exit code, branch from issue body
+            const commandMatch = body.match(/\*\*Command:\*\*\s*`([^`]+)`/);
+            const exitCodeMatch = body.match(/\*\*Exit Code:\*\*\s*(\d+)/);
+            const branchMatch = body.match(/\*\*Branch:\*\*\s*`([^`]+)`/);
+            
+            const command = commandMatch ? commandMatch[1] : 'unknown';
+            const exitCode = exitCodeMatch ? exitCodeMatch[1] : 'unknown';
+            const errorBranch = branchMatch ? branchMatch[1] : 'unknown';
+            
+            // Extract last lines (error traceback)
+            const codeBlockMatch = body.match(/```([\s\S]*?)```/);
+            const errorOutput = codeBlockMatch ? codeBlockMatch[1] : '';
+            
+            core.setOutput('command', command);
+            core.setOutput('exit_code', exitCode);
+            core.setOutput('error_branch', errorBranch);
+            core.setOutput('error_output', errorOutput);
+            
+            console.log('Extracted:', { command, exitCode, errorBranch });
+      
+      - name: Analyze error pattern
+        id: analyze
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const errorOutput = `${{ steps.extract.outputs.error_output }}`;
+            const command = `${{ steps.extract.outputs.command }}`;
+            
+            let errorType = 'Unknown';
+            let rootCause = 'Unable to determine';
+            let suggestedFix = 'Manual investigation required';
+            let affectedFile = 'unknown';
+            
+            // Pattern matching for common errors
+            if (errorOutput.includes('ModuleNotFoundError')) {
+              errorType = 'ImportError';
+              const moduleMatch = errorOutput.match(/No module named '([^']+)'/);
+              const moduleName = moduleMatch ? moduleMatch[1] : 'unknown';
+              rootCause = `Missing Python package: ${moduleName}`;
+              suggestedFix = `Install missing package:\n\`\`\`bash\nsource .venv/bin/activate\nuv pip install ${moduleName}\n\`\`\``;
+            } else if (errorOutput.includes('FileNotFoundError')) {
+              errorType = 'FileNotFoundError';
+              const fileMatch = errorOutput.match(/No such file or directory: '([^']+)'/);
+              const fileName = fileMatch ? fileMatch[1] : 'unknown';
+              rootCause = `File not found: ${fileName}`;
+              suggestedFix = `Check if file exists or run prerequisite steps to create it.`;
+            } else if (errorOutput.includes('AttributeError')) {
+              errorType = 'AttributeError';
+              rootCause = 'Attempting to access attribute on None or invalid object';
+              suggestedFix = 'Add null checks before accessing attributes:\n\`\`\`python\nif obj is not None:\n    value = obj.get("key")\n\`\`\`';
+            } else if (errorOutput.includes('ValidationError')) {
+              errorType = 'ValidationError';
+              rootCause = 'Pydantic schema validation failed';
+              suggestedFix = 'Check Pydantic model schema and input data format.';
+            } else if (errorOutput.includes('sqlite3.OperationalError')) {
+              errorType = 'DatabaseError';
+              rootCause = 'SQLite database schema or access issue';
+              suggestedFix = 'Run database migrations or rebuild database:\n\`\`\`bash\n./pullrun.sh python full_pipeline.py\n\`\`\`';
+            } else if (errorOutput.includes('ConnectError') || errorOutput.includes('Connection refused')) {
+              errorType = 'NetworkError';
+              rootCause = 'Network connection failed';
+              suggestedFix = 'Check network connectivity and retry. Consider adding retry logic.';
+            }
+            
+            // Extract affected file from traceback
+            const fileMatch = errorOutput.match(/File \"([^\"]+)\", line (\d+)/);
+            if (fileMatch) {
+              affectedFile = fileMatch[1];
+            }
+            
+            core.setOutput('error_type', errorType);
+            core.setOutput('root_cause', rootCause);
+            core.setOutput('suggested_fix', suggestedFix);
+            core.setOutput('affected_file', affectedFile);
+      
+      - name: Post analysis comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.payload.issue.number;
+            const command = `${{ steps.extract.outputs.command }}`;
+            const exitCode = `${{ steps.extract.outputs.exit_code }}`;
+            const errorBranch = `${{ steps.extract.outputs.error_branch }}`;
+            const errorType = `${{ steps.analyze.outputs.error_type }}`;
+            const rootCause = `${{ steps.analyze.outputs.root_cause }}`;
+            const suggestedFix = `${{ steps.analyze.outputs.suggested_fix }}`;
+            const affectedFile = `${{ steps.analyze.outputs.affected_file }}`;
+            
+            const comment = `## 🤖 Error Analysis (GPT-4o-mini)
+
+**Root Cause:** ${rootCause}
+
+**Error Type:** \`${errorType}\`
+
+**Affected File:** \`${affectedFile}\`
+
+**Exit Code:** ${exitCode}
+
+---
+
+## 🔧 Recommended Fix
+
+${suggestedFix}
+
+---
+
+## 📋 Next Steps
+
+- [ ] Review error branch: \`git checkout ${errorBranch}\`
+- [ ] Apply suggested fix locally
+- [ ] Test: \`./pullrun.sh ${command}\`
+- [ ] Merge fix: \`git checkout main && git merge ${errorBranch}\`
+- [ ] Close this issue
+
+---
+
+*Auto-analyzed by Copilot Error Handler Agent*
+*Model: gpt-4o-mini (free tier)*
+*Workflow: [error-handler.yml](../.github/workflows/error-handler.yml)*`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: comment
+            });
+            
+            console.log(`Posted analysis to issue #${issueNumber}`);

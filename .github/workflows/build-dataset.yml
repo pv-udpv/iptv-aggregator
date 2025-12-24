@@ -1,0 +1,178 @@
+name: Build Master IPTV Dataset
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+    inputs:
+      skip_epg_grab:
+        description: 'Skip EPG grabbing (use cached)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: '3.12'
+  UV_VERSION: '0.5.20'
+
+jobs:
+  build-dataset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      
+      - name: Create venv and sync deps
+        run: |
+          uv venv
+          uv sync --all-extras
+      
+      - name: Cache EPG data
+        id: cache-epg
+        uses: actions/cache@v4
+        with:
+          path: |
+            output/cache
+            output/guide.xml
+          key: epg-${{ hashFiles('output/channels.xml') }}-${{ github.run_number }}
+          restore-keys: |
+            epg-${{ hashFiles('output/channels.xml') }}-
+            epg-
+      
+      # ========== DATA EXTRACTION ==========
+      
+      - name: Extract iptv-org data
+        run: |
+          source .venv/bin/activate
+          python tools/iptv_org_extractor.py \
+            --output output/raw \
+            --include channels,streams,guides,categories
+      
+      - name: Extract IPTVPortal channels
+        env:
+          IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
+        run: |
+          source .venv/bin/activate
+          python tools/iptvportal_loader.py \
+            --output output/raw/portal_channels.csv
+      
+      - name: Load usage stats (ClickHouse)
+        if: ${{ secrets.CLICKHOUSE_HOST != '' }}
+        env:
+          CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
+          CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+        run: |
+          source .venv/bin/activate
+          python tools/clickhouse_usage_loader.py \
+            --output output/raw/usage_stats.csv \
+            --days 30
+      
+      # ========== CHANNEL MATCHING ==========
+      
+      - name: Fuzzy match channels (RapidFuzz)
+        run: |
+          source .venv/bin/activate
+          python tools/fuzzy_channel_matcher.py \
+            --iptv-org output/raw/channels.csv \
+            --portal output/raw/portal_channels.csv \
+            --threshold 85 \
+            --max-workers 4 \
+            --output output/matches.csv
+      
+      # ========== EPG GRABBING ==========
+      
+      - name: Generate channels.xml for EPG grabber
+        run: |
+          source .venv/bin/activate
+          python tools/generate_channels_xml.py \
+            --guides output/raw/guides.csv \
+            --matches output/matches.csv \
+            --output output/channels.xml \
+            --max-channels 1000
+      
+      - name: Pull iptv-org/epg Docker image
+        if: ${{ !inputs.skip_epg_grab && steps.cache-epg.outputs.cache-hit != 'true' }}
+        run: docker pull ghcr.io/iptv-org/epg:master
+      
+      - name: Grab EPG (iptv-org/epg)
+        if: ${{ !inputs.skip_epg_grab && steps.cache-epg.outputs.cache-hit != 'true' }}
+        run: |
+          docker run --rm \
+            -v $(pwd)/output:/epg/output \
+            -v $(pwd)/output/channels.xml:/epg/channels.xml:ro \
+            ghcr.io/iptv-org/epg:master \
+            npm run grab -- \
+              --channels=/epg/channels.xml \
+              --output=/epg/output/guide.xml \
+              --maxConnections=10 \
+              --gzip \
+              --timeout=10000 \
+              --delay=500
+      
+      - name: Parse XMLTV to SQLite
+        run: |
+          source .venv/bin/activate
+          python tools/xmltv_parser.py \
+            --input output/guide.xml \
+            --db output/epg.db \
+            --truncate-old-programs
+      
+      # ========== MASTER DATASET BUILD ==========
+      
+      - name: Build master dataset (Parquet)
+        run: |
+          source .venv/bin/activate
+          python tools/build_master_dataset.py \
+            --db output/epg.db \
+            --output data/master-dataset
+      
+      - name: Validate dataset
+        run: |
+          source .venv/bin/activate
+          python tools/validate_dataset.py data/master-dataset/
+      
+      - name: Generate report
+        run: |
+          source .venv/bin/activate
+          python tools/generate_report.py \
+            --input data/master-dataset/ \
+            --output data/master-dataset/REPORT.md
+      
+      # ========== PUBLISH ==========
+      
+      - name: Commit to dataset branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -B dataset-auto
+          git add data/master-dataset/
+          
+          git commit -m "chore: update master dataset
+          
+          Build: ${{ github.run_number }}
+          Time: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          Channels: $(cat data/master-dataset/metadata.json | jq -r '.stats.channels')
+          Programs: $(cat data/master-dataset/metadata.json | jq -r '.stats.programs')" \
+          || echo "No changes to commit"
+          
+          git push -f origin dataset-auto
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-dataset-${{ github.run_number }}
+          path: data/master-dataset/
+          retention-days: 30
+          compression-level: 9

@@ -90,6 +90,7 @@ jobs:
           python output/dump_tv_channel.py
         env:
           IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
+        continue-on-error: true
       
       - name: Сборка iptv-org базы
         run: |
@@ -103,13 +104,17 @@ jobs:
       
       - name: Advanced Fuzzy matching (rapidfuzz + taxonomy v2)
         run: |
-          echo "🎯 Running advanced fuzzy matching with taxonomy v2..."
-          echo "Features: rapidfuzz, quality/country extraction, normalization, hierarchy"
+          echo "🎯 Running advanced fuzzy matching..."
           python output/production_fuzzy_matching_v2.py
       
-      - name: Генерация статистики
+      - name: Извлечение country из TVG ID
         run: |
-          echo "📊 Generating stats with taxonomy..."
+          echo "🌍 Extracting country codes from TVG IDs..."
+          python scripts/extract_tvg_country.py
+      
+      - name: Генерация статистики каналов
+        run: |
+          echo "📊 Generating channel stats..."
           python scripts/generate_channel_stats.py
       
       - name: Commit результаты
@@ -118,11 +123,12 @@ jobs:
           git config user.email "actions@github.com"
           
           git add output/tv_channel_full_dump.json || true
-          git add output/matching_results_v2.json || true
           git add output/iptv_full.db || true
+          git add output/matching_results_v2.json || true
           git add stats/channels_*.json || true
+          git add stats/epg_stats.json || true
           
-          git commit -m "chore: weekly channel sync with taxonomy v2 $(date -u +%Y-%m-%d)" || echo "No changes"
+          git commit -m "chore: weekly channel sync with taxonomy v2 and TVG extraction $(date -u +%Y-%m-%d)" || echo "No changes"
           git push || echo "No push needed"
 
   sync-epg:
@@ -148,17 +154,12 @@ jobs:
       
       - name: Загрузка EPG
         run: |
-          echo "📺 Downloading EPG..."
+          echo "📺 Downloading EPG guides..."
           python scripts/download_epg.py
-      
-      - name: Обработка EPG
-        run: |
-          echo "⚙️ Processing EPG..."
-          python scripts/process_epg.py
       
       - name: Генерация M3U с EPG
         run: |
-          echo "📝 Generating M3U playlists..."
+          echo "📝 Generating M3U playlists with EPG..."
           python scripts/generate_m3u_with_epg.py
       
       - name: Commit EPG
@@ -166,11 +167,11 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           
-          git add epg/*.xml || true
-          git add playlists/*.m3u || true
+          git add epg/cache/*.xml || true
+          git add playlists/*.m3u8 || true
           git add stats/epg_*.json || true
           
-          git commit -m "chore: daily EPG sync $(date -u +%Y-%m-%d)" || echo "No changes"
+          git commit -m "chore: daily EPG sync and M3U generation $(date -u +%Y-%m-%d)" || echo "No changes"
           git push || echo "No push needed"
 
   report:

@@ -1,6 +1,6 @@
 # IPTV Aggregator - Makefile
 
-.PHONY: help install demo test lint format clean docker-build docker-run gh-demo
+.PHONY: help install demo demo-epg test lint format clean docker-build docker-run gh-demo gh-epg
 
 help: ## Show this help
 	@echo "IPTV Aggregator - Available Commands"
@@ -18,12 +18,23 @@ install-dev: ## Install dev dependencies
 	pip install pytest pytest-asyncio ruff mypy
 	@echo "✅ Done!"
 
-demo: ## Run demo
+demo: ## Run basic demo
 	@echo "🚀 Running demo..."
 	python demo.py
 	@echo ""
 	@echo "📁 Output:"
 	@ls -lh output/
+
+demo-epg: ## Run REAL EPG demo (scrapes BBC, ITV, etc)
+	@echo "🌐 Running REAL EPG demo..."
+	@echo "   This will scrape real TV schedules from BBC, ITV, Channel 4"
+	@echo "   May take 1-2 minutes..."
+	@echo ""
+	python demo_real_epg.py
+	@echo ""
+	@echo "📊 EPG Stats:"
+	@sqlite3 output/real_epg.db "SELECT COUNT(*) as programmes FROM programmes;"
+	@sqlite3 output/real_epg.db "SELECT COUNT(DISTINCT channel_id) as channels FROM programmes;"
 
 test: ## Run tests
 	@echo "🧪 Running tests..."
@@ -56,6 +67,14 @@ db-inspect: ## Inspect SQLite database
 	@echo "Sample channels:"
 	@sqlite3 -header -column output/demo.db "SELECT id, name, country FROM channels LIMIT 10;"
 
+epg-inspect: ## Inspect EPG database
+	@echo "📺 EPG Database inspection:"
+	@sqlite3 output/real_epg.db "SELECT COUNT(*) as total FROM programmes;"
+	@sqlite3 output/real_epg.db "SELECT channel_id, COUNT(*) as count FROM programmes GROUP BY channel_id;"
+	@echo ""
+	@echo "Sample programmes:"
+	@sqlite3 -header -column output/real_epg.db "SELECT channel_id, title, start FROM programmes LIMIT 10;"
+
 playlist-preview: ## Preview M3U playlist
 	@echo "📺 Playlist preview:"
 	@head -30 output/demo.m3u
@@ -83,6 +102,14 @@ gh-demo: ## Trigger demo workflow
 	@echo "✅ Workflow dispatched!"
 	@echo "🔎 Watch: gh run watch"
 
+gh-epg: ## Trigger REAL EPG workflow
+	@echo "🌐 Triggering REAL EPG workflow..."
+	gh workflow run real-epg.yml
+	@echo "✅ Workflow dispatched!"
+	@echo "🔎 Watch: gh run watch"
+	@echo ""
+	@echo "This will scrape BBC, ITV, Channel 4 schedules"
+
 gh-schedule: ## Trigger scheduled refresh
 	@echo "🔄 Triggering scheduled refresh..."
 	gh workflow run schedule.yml
@@ -103,14 +130,6 @@ dev-setup: install-dev ## Full dev setup
 	pre-commit install 2>/dev/null || echo "pre-commit not available"
 	@echo "✅ Dev environment ready!"
 
-dev-watch: ## Watch for changes and run demo
-	@echo "👁️  Watching for changes..."
-	while true; do \
-		inotifywait -e modify src/ demo.py 2>/dev/null || sleep 2; \
-		clear; \
-		python demo.py; \
-	done
-
 # Stats
 stats: ## Show project stats
 	@echo "📊 Project Statistics:"
@@ -130,3 +149,5 @@ q: demo ## Quick demo (alias)
 qq: clean demo ## Clean + demo
 
 qqq: clean install demo ## Full rebuild + demo
+
+epg: demo-epg ## Quick EPG demo (alias)

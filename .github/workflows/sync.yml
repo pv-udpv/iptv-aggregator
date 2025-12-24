@@ -82,22 +82,24 @@ jobs:
       - name: Install dependencies
         run: |
           uv pip install --system httpx rapidfuzz
-          uv pip install --system git+https://github.com/pv-udpv/iptvportal-client.git
       
       - name: Дамп IPTVPortal tv_channel
         run: |
           echo "🔄 Dumping IPTVPortal channels..."
           python output/dump_tv_channel.py
+        env:
+          IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
       
       - name: Сборка iptv-org базы
         run: |
           echo "🔄 Building iptv-org database..."
           python full_pipeline.py
       
-      - name: Fuzzy matching
+      - name: Advanced Fuzzy matching (rapidfuzz)
         run: |
-          echo "🎯 Running fuzzy matching..."
-          python output/production_fuzzy_matching.py
+          echo "🎯 Running advanced fuzzy matching..."
+          echo "Features: rapidfuzz, quality/country extraction, normalization"
+          python output/advanced_fuzzy_matching.py
       
       - name: Генерация статистики
         run: |

@@ -1,0 +1,192 @@
+name: IPTV Data Sync
+
+on:
+  schedule:
+    # EPG синхронизация - ежедневно в 00:00 UTC (03:00 MSK)
+    - cron: '0 0 * * *'
+    
+    # Каналы синхронизация - раз в неделю, воскресенье 02:00 UTC (05:00 MSK)
+    - cron: '0 2 * * 0'
+  
+  workflow_dispatch:
+    inputs:
+      sync_type:
+        description: 'Тип синхронизации'
+        required: true
+        type: choice
+        options:
+          - epg_only
+          - channels_only
+          - full_sync
+
+env:
+  IPTVPORTAL_SESSION_ID: ${{ secrets.IPTVPORTAL_SESSION_ID }}
+
+jobs:
+  detect-sync-type:
+    runs-on: ubuntu-latest
+    outputs:
+      should_sync_channels: ${{ steps.check.outputs.channels }}
+      should_sync_epg: ${{ steps.check.outputs.epg }}
+    
+    steps:
+      - name: Определить тип синхронизации
+        id: check
+        run: |
+          # Manual trigger
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            case "${{ inputs.sync_type }}" in
+              channels_only)
+                echo "channels=true" >> $GITHUB_OUTPUT
+                echo "epg=false" >> $GITHUB_OUTPUT
+                ;;
+              epg_only)
+                echo "channels=false" >> $GITHUB_OUTPUT
+                echo "epg=true" >> $GITHUB_OUTPUT
+                ;;
+              full_sync)
+                echo "channels=true" >> $GITHUB_OUTPUT
+                echo "epg=true" >> $GITHUB_OUTPUT
+                ;;
+            esac
+          # Scheduled trigger
+          else
+            # Воскресенье 02:00 UTC - каналы + EPG
+            if [ "$(date -u +%w)" == "0" ] && [ "$(date -u +%H)" == "02" ]; then
+              echo "channels=true" >> $GITHUB_OUTPUT
+              echo "epg=true" >> $GITHUB_OUTPUT
+            # Каждый день 00:00 UTC - только EPG
+            else
+              echo "channels=false" >> $GITHUB_OUTPUT
+              echo "epg=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  sync-channels:
+    needs: detect-sync-type
+    if: needs.detect-sync-type.outputs.should_sync_channels == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      
+      - name: Install dependencies
+        run: |
+          uv pip install --system httpx rapidfuzz
+          uv pip install --system git+https://github.com/pv-udpv/iptvportal-client.git
+      
+      - name: Дамп IPTVPortal tv_channel
+        run: |
+          echo "🔄 Dumping IPTVPortal channels..."
+          python output/dump_tv_channel.py
+      
+      - name: Сборка iptv-org базы
+        run: |
+          echo "🔄 Building iptv-org database..."
+          python full_pipeline.py
+      
+      - name: Fuzzy matching
+        run: |
+          echo "🎯 Running fuzzy matching..."
+          python output/production_fuzzy_matching.py
+      
+      - name: Генерация статистики
+        run: |
+          echo "📊 Generating stats..."
+          python scripts/generate_channel_stats.py
+      
+      - name: Commit результаты
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          git add output/tv_channel_full_dump.json
+          git add output/matching_results.json
+          git add output/iptv_full.db
+          git add stats/channels_*.json
+          
+          git commit -m "chore: weekly channel sync $(date -u +%Y-%m-%d)" || echo "No changes"
+          git push
+
+  sync-epg:
+    needs: detect-sync-type
+    if: needs.detect-sync-type.outputs.should_sync_epg == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      
+      - name: Install dependencies
+        run: |
+          uv pip install --system httpx
+      
+      - name: Загрузка EPG
+        run: |
+          echo "📺 Downloading EPG..."
+          python scripts/download_epg.py
+      
+      - name: Обработка EPG
+        run: |
+          echo "⚙️ Processing EPG..."
+          python scripts/process_epg.py
+      
+      - name: Генерация M3U с EPG
+        run: |
+          echo "📝 Generating M3U playlists..."
+          python scripts/generate_m3u_with_epg.py
+      
+      - name: Commit EPG
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          git add epg/*.xml
+          git add playlists/*.m3u
+          git add stats/epg_*.json
+          
+          git commit -m "chore: daily EPG sync $(date -u +%Y-%m-%d)" || echo "No changes"
+          git push
+
+  report:
+    needs: [sync-channels, sync-epg]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Генерация отчёта
+        run: |
+          echo "# Sync Report - $(date -u +%Y-%m-%d)" > report.md
+          echo "" >> report.md
+          echo "## Статус:" >> report.md
+          echo "- Channels: ${{ needs.sync-channels.result }}" >> report.md
+          echo "- EPG: ${{ needs.sync-epg.result }}" >> report.md
+      
+      - name: Отправка уведомления
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Sync failed - ' + new Date().toISOString(),
+              body: 'Автоматическая синхронизация завершилась с ошибкой. Проверь логи.'
+            })

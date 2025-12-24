@@ -1,0 +1,77 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="13MaxTelevision.ar" tvg-name="13Max Television" group-title="general",13Max Television
+http://coninfo.net:1935/13maxhd/live13maxtvnuevo/playlist.m3u8
+#EXTINF:-1 tvg-id="13MaxTelevision.ar" tvg-name="13Max Television" group-title="general",13Max Television
+http://coninfo.net:1935/13maxhd/live13maxtvnuevo_720p/playlist.m3u8
+#EXTINF:-1 tvg-id="247CanaldeNoticias.ar" tvg-name="24/7 Canal de Noticias" group-title="news",24/7 Canal de Noticias
+https://panel.host-live.com:19360/cn247tv/cn247tv.m3u8
+#EXTINF:-1 tvg-id="10Bold.au" tvg-name="10 Bold" group-title="lifestyle",10 Bold
+https://dce3793146fef017.mediapackage.us-west-2.amazonaws.com/out/v1/55cdf73af7894775ba6de8f57482b66a/CMAF_HLS/index.m3u8
+#EXTINF:-1 tvg-id="100AutoMotoTV.bg" tvg-name="100% Auto Moto TV" group-title="auto",100% Auto Moto TV
+http://100automoto.tv:1935/bgtv1/autotv/playlist.m3u8
+#EXTINF:-1 tvg-id="1001Noites.br" tvg-name="1001 Noites" group-title="shop",1001 Noites
+https://cdn.jmvstream.com/w/LVW-8155/ngrp:LVW8155_41E1ciuCvO_all/playlist.m3u8
+#EXTINF:-1 tvg-id="13Festival.cl" tvg-name="13 Festival" group-title="music",13 Festival
+https://origin.dpsgo.com/ssai/event/Nftd0fM2SXasfDlRphvUsg/master.m3u8
+#EXTINF:-1 tvg-id="13Mini.cl" tvg-name="13 Mini" group-title="kids",13 Mini
+https://origin.dpsgo.com/ssai/event/BBp0VeP6QtOOlH8nu3bWTg/master.m3u8
+#EXTINF:-1 tvg-id="13T.cl" tvg-name="13T" group-title="entertainment",13T
+https://origin.dpsgo.com/ssai/event/gEjsSsxBSyqh25vb3fCBjA/master.m3u8
+#EXTINF:-1 tvg-id="13T.cl" tvg-name="13T" group-title="entertainment",13T
+https://origin.dpsgo.com/ssai/event/gEjsSsxBSyqh25vb3fCBjA/master.m3u8?SID=7
+#EXTINF:-1 tvg-id="13T.cl" tvg-name="13T" group-title="entertainment",13T
+https://origin.dpsgo.com/ssai/event/gEjsSsxBSyqh25vb3fCBjA/master.m3u8?SID=8
+#EXTINF:-1 tvg-id="13Plus.cl" tvg-name="13+" group-title="general",13+
+https://origin.dpsgo.com/ssai/event/pHHcD-XoS1u0wqc7E5mZOg/master.m3u8
+#EXTINF:-1 tvg-id="13i.cl" tvg-name="13i" group-title="news",13i
+https://origin.dpsgo.com/ssai/event/VecOUKxFRiW7nSm2_ss0jQ/master.m3u8
+#EXTINF:-1 tvg-id="24HorasInternacional.cl" tvg-name="24 Horas Internacional" group-title="news",24 Horas Internacional
+https://ythls.armelin.one/channel/UCTXNz3gjAypWp3EhlIATEJQ.m3u8
+#EXTINF:-1 tvg-id="13Teleseries.cl" tvg-name="13 Teleseries" group-title="series",13 Teleseries
+https://origin.dpsgo.com/ssai/event/f4TrySe8SoiGF8Lu3EIq1g/master.m3u8
+#EXTINF:-1 tvg-id="13Comedias.cl" tvg-name="13 Comedias" group-title="comedy",13 Comedias
+https://origin.dpsgo.com/ssai/event/5k46mJJET4aDWeAAEoKlQw/master.m3u8
+#EXTINF:-1 tvg-id="13Realities.cl" tvg-name="13 Realities" group-title="entertainment",13 Realities
+https://origin.dpsgo.com/ssai/event/HuO5RCVTR9aQd8ygZmuyNg/master.m3u8
+#EXTINF:-1 tvg-id="13Prime.cl" tvg-name="13 Prime" group-title="series",13 Prime
+https://origin.dpsgo.com/ssai/event/ow3oUMwpSsWs0G1BtlfjOg/master.m3u8
+#EXTINF:-1 tvg-id="13Uno.cl" tvg-name="13 Uno" group-title="series",13 Uno
+https://origin.dpsgo.com/ssai/event/VF6PnVT7ReiFwY6VqHCphw/master.m3u8
+#EXTINF:-1 tvg-id="13Mundo.cl" tvg-name="13 Mundo" group-title="documentary",13 Mundo
+https://origin.dpsgo.com/ssai/event/R5D_CEaaT-O2xexDFxFDcQ/master.m3u8
+#EXTINF:-1 tvg-id="CCTVDAmerica.cn" tvg-name="CCTV-4 America" group-title="news",CCTV-4 America
+https://global.cgtn.cicc.media.caton.cloud/master/cgtn-america.m3u8
+#EXTINF:-1 tvg-id="ARDalpha.de" tvg-name="ARD alpha" group-title="general",ARD alpha
+https://mcdn.br.de/br/fs/ard_alpha/hls/de/master.m3u8
+#EXTINF:-1 tvg-id="DW.de" tvg-name="DW" group-title="news",DW
+https://dwamdstream104.akamaized.net/hls/live/2015530/dwstream104/index.m3u8
+#EXTINF:-1 tvg-id="DW.de" tvg-name="DW" group-title="news",DW
+https://dwamdstream104.akamaized.net/hls/live/2015530/dwstream104/index.m3u8?device=awf
+#EXTINF:-1 tvg-id="MDR.de" tvg-name="MDR" group-title="general",MDR
+https://mdrthueringentv-lh.akamaihd.net/i/livetvmdrthuerhls_1@411499/master.m3u8
+#EXTINF:-1 tvg-id="ARDalpha.de" tvg-name="ARD alpha" group-title="general",ARD alpha
+https://mcdn.br.de/br/fs/ard_alpha/hls/de/master.m3u8
+#EXTINF:-1 tvg-id="BR.de" tvg-name="BR" group-title="general",BR
+https://mcdn.br.de/br/fs/bfs_sued/hls/de/master.m3u8
+#EXTINF:-1 tvg-id="DRKongenTV.dk" tvg-name="DRK" group-title="kids",DRK
+https://drlive01hls.akamaized.net/hls/live/2014196/drevent01/master.m3u8
+#EXTINF:-1 tvg-id="002RadioTV.do" tvg-name="002 Radio TV" group-title="general",002 Radio TV
+https://cdn.002radio.com:3909/live/radio002live.m3u8
+#EXTINF:-1 tvg-id="AmazoniaTVEcuador.ec" tvg-name="Amazonía TV (Ecuador)" group-title="general",Amazonía TV (Ecuador)
+https://cloudvideo.servers10.com:8081/8108/index.m3u8
+#EXTINF:-1 tvg-id="101tvMalaga.es" tvg-name="101tv Málaga" group-title="general",101tv Málaga
+https://limited12.todostreaming.es/live/101tv-AntonioRecio.m3u8
+#EXTINF:-1 tvg-id="13CMadrid.es" tvg-name="13C Madrid" group-title="entertainment",13C Madrid
+https://streaming.procono.es/hls/13c/livestream.m3u8
+#EXTINF:-1 tvg-id="101tvAxarquia.es" tvg-name="101tv Axarquia" group-title="general",101tv Axarquia
+https://limited38.todostreaming.es/live/nerja-livestream.m3u8
+#EXTINF:-1 tvg-id="101tvAntequera.es" tvg-name="101tv Antequera" group-title="general",101tv Antequera
+https://limited2.todostreaming.es/live/101tv-AntonioRomero.m3u8
+#EXTINF:-1 tvg-id="101tvRondaTV.es" tvg-name="101tv Ronda TV" group-title="general",101tv Ronda TV
+https://limited11.todostreaming.es/live/ronda-livestream.m3u8
+#EXTINF:-1 tvg-id="A3Series.es" tvg-name="A3 Series" group-title="series",A3 Series
+https://fast-channels.atresmedia.com/648ef163e0a14a001252f0e0/648ef163e0a14a001252f0e0.m3u8
+#EXTINF:-1 tvg-id="Antena3.es" tvg-name="Antena 3" group-title="general",Antena 3
+https://fast-channels.atresmedia.com/648ef184e0a14a0012530ba0/648ef184e0a14a0012530ba0.m3u8
+#EXTINF:-1 tvg-id="AMTVAzerbaijan.az" tvg-name="AMTV (Azerbaijan)" group-title="general",AMTV (Azerbaijan)
+https://streamer1.connectto.com/KHAZER_WEB_1003/index.m3u8

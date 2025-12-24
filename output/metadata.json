@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "generated_at": "2025-12-24T05:57:14.451518",
+  "source": "iptv-org API",
+  "statistics": {
+    "total_channels": 100,
+    "total_streams": 40,
+    "countries": 41
+  },
+  "countries": [
+    "AF",
+    "AR",
+    "AU",
+    "AZ",
+    "BG",
+    "BR",
+    "CD",
+    "CL",
+    "CN",
+    "DE",
+    "DK",
+    "DO",
+    "EC",
+    "ES",
+    "FR",
+    "GE",
+    "GR",
+    "HU",
+    "IN",
+    "IR"
+  ],
+  "files": {
+    "database": "output/iptv.db",
+    "playlist": "output/playlist.m3u"
+  }
+}
